@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class RutasGatewayTest {
 
-    private record Peticion(String path, String traceId) {
+    private record Peticion(String path, String traceId, String userCiamId, String userId, String rolUserId) {
     }
 
     private static final BlockingQueue<Peticion> PETICIONES = new LinkedBlockingQueue<>();
@@ -44,10 +44,20 @@ class RutasGatewayTest {
         try {
             HttpServer servidor = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
             servidor.createContext("/", exchange -> {
+                String rawPath = exchange.getRequestURI().getRawPath();
                 PETICIONES.add(new Peticion(
-                        exchange.getRequestURI().getRawPath(),
-                        exchange.getRequestHeaders().getFirst("X-Trace-Id")));
-                byte[] cuerpo = "ok".getBytes();
+                        rawPath,
+                        exchange.getRequestHeaders().getFirst("X-Trace-Id"),
+                        exchange.getRequestHeaders().getFirst("X-User-Ciam-Id"),
+                        exchange.getRequestHeaders().getFirst("X-User-Id"),
+                        exchange.getRequestHeaders().getFirst("X-Rol-User-Id")));
+                byte[] cuerpo;
+                if (rawPath.startsWith("/ms-identidad/api/v1/usuarios/ciam/")) {
+                    cuerpo = "{\"idUsuario\":42,\"idRol\":7}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                    exchange.getResponseHeaders().add("Content-Type", "application/json");
+                } else {
+                    cuerpo = "ok".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                }
                 exchange.sendResponseHeaders(200, cuerpo.length);
                 try (var salida = exchange.getResponseBody()) {
                     salida.write(cuerpo);
@@ -130,6 +140,44 @@ class RutasGatewayTest {
                 .expectStatus().isOk();
 
         assertThat(esperarPeticion().traceId()).isEqualTo(traza);
+    }
+
+    @Test
+    void extraeSubDelTokenConsultaCiamYEnviaHeadersAlMicroservicio() {
+        // Header: {"alg":"none"}, Payload: {"sub":"usuario-123","name":"Test"}
+        String header = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("{\"alg\":\"none\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String payload = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("{\"sub\":\"usuario-123\",\"name\":\"Test\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String jwt = header + "." + payload + ".";
+
+        cliente.get().uri("/ms-operaciones/api/v1/placas")
+                .header("Authorization", "Bearer " + jwt)
+                .exchange()
+                .expectStatus().isOk();
+
+        // 1ra petición al backend: la consulta a ms-identidad por el id_ciam (sub)
+        Peticion peticionCiam = esperarPeticion();
+        assertThat(peticionCiam.path()).isEqualTo("/ms-identidad/api/v1/usuarios/ciam/usuario-123");
+
+        // 2da petición al backend: la petición enrutada a ms-operaciones con los headers poblados
+        Peticion peticionOperaciones = esperarPeticion();
+        assertThat(peticionOperaciones.path()).isEqualTo("/ms-operaciones/api/v1/placas");
+        assertThat(peticionOperaciones.userCiamId()).isEqualTo("usuario-123");
+        assertThat(peticionOperaciones.userId()).isEqualTo("42");
+        assertThat(peticionOperaciones.rolUserId()).isEqualTo("7");
+    }
+
+    @Test
+    void noEnviaHeaderXUserIdCuandoNoHayToken() {
+        cliente.get().uri("/ms-operaciones/api/v1/placas")
+                .exchange()
+                .expectStatus().isOk();
+
+        Peticion recibida = esperarPeticion();
+        assertThat(recibida.userCiamId()).isNull();
+        assertThat(recibida.userId()).isNull();
+        assertThat(recibida.rolUserId()).isNull();
     }
 
     private static Peticion esperarPeticion() {

@@ -1,12 +1,44 @@
 # gazel-gw-gateway
 
 API Gateway del Portal de Revisiones Gazel (Terpel). Spring Cloud Gateway (WebFlux) que expone
-los cinco microservicios backend bajo un único puerto y el prefijo `/ms-*`.
+los microservicios backend bajo un único puerto y el prefijo `/ms-*`.
 
-> **Herramienta de desarrollo local.** Sirve para golpear los cinco microservicios con `curl`
-> desde un solo puerto. **No se despliega**: en QA y PRD el front consume los microservicios
-> directamente a través del ingress de GKE, y este proyecto no tiene Dockerfile ni pipeline
-> (a diferencia de los `ms-*`). Si algún día se despliega, falta lo listado en *Pendiente*.
+> **Herramienta de desarrollo local.** Sirve para golpear los microservicios con `curl` desde un
+> solo puerto. **No se despliega**: en QA y PRD el front consume los microservicios directamente
+> a través del ingress de GKE, y este proyecto no tiene Dockerfile ni pipeline (a diferencia de
+> los `ms-*`). Si algún día se despliega, falta lo listado en *Pendiente*.
+
+## Requisitos
+
+- **JDK 21** (el `pom.xml` compila con `release 21`; con 17 o 11 falla).
+- Conexión a internet en el primer build: `mvnw` descarga Maven y las dependencias de Spring.
+
+No hay base de datos, credenciales ni variables obligatorias. Verifica el JDK antes de empezar:
+
+```bash
+java -version        # debe decir 21.x
+echo $JAVA_HOME      # en Windows: echo %JAVA_HOME%
+```
+
+Si el sistema tiene otra versión por defecto, exporta un JDK 21 solo para esta terminal:
+
+```bash
+export JAVA_HOME="/c/Program Files/Zulu/zulu-21"     # Git Bash
+# PowerShell: $env:JAVA_HOME = "C:\Program Files\Zulu\zulu-21"
+```
+
+Sin `JAVA_HOME` correcto el build falla con `release version 21 not supported`.
+
+## Arrancar
+
+```bash
+./mvnw spring-boot:run          # Windows: mvnw.cmd spring-boot:run
+# http://localhost:8090/actuator/health
+```
+
+El gateway **no levanta los microservicios**: si no están arriba, cada ruta responde 500 con
+`Connection refused`. Para que enrute de verdad hay que arrancar cada repo `ms-*` (o el script
+`arrancar-todo.sh` que está fuera de este repo).
 
 ## Rutas
 
@@ -20,10 +52,30 @@ los cinco microservicios backend bajo un único puerto y el prefijo `/ms-*`.
 | `/ms-soporte/**`     | cf-soporte       | `MS_SOPORTE_URI`     | `http://localhost:8080` |
 
 - Los cuatro primeros **no** recortan prefijo: el microservicio ya declara ese `context-path`.
-- `ms-analitica` **sí** recorta (`StripPrefix=1`), porque no declara `context-path` y sirve en raíz.
-- `cf-soporte` también recorta: es una Cloud Function (`HttpFunction`) que sirve en raíz y
-  responde su health en cualquier path.
+  La URL pública es el prefijo del gateway + el path del controller.
+- `ms-analitica` y `cf-soporte` **sí** recortan (`StripPrefix=1`): sirven en raíz, sin
+  `context-path`.
 - Cada servicio usa un puerto local distinto, así que se pueden levantar todos a la vez.
+
+### Ejemplos
+
+```bash
+# talleres (ms-operaciones declara context-path /ms-operaciones)
+curl "http://localhost:8090/ms-operaciones/api/v1/talleres?page=0&size=20"
+curl "http://localhost:8090/ms-operaciones/api/v1/talleres/{id}"
+
+# analitica pierde el prefijo: se pide /ms-analitica/api/v1/... y llega /api/v1/...
+curl "http://localhost:8090/ms-analitica/api/v1/indicadores"
+
+# soporte: health de la Cloud Function
+curl "http://localhost:8090/ms-soporte/"
+```
+
+Para apuntar una ruta a otro lado:
+
+```bash
+MS_FACTURACION_URI=http://localhost:9002 ./mvnw spring-boot:run
+```
 
 ### cf-soporte (Cloud Function)
 
@@ -33,12 +85,15 @@ Cloud Function Gen 2. Se levanta con `./mvnw function:run` (desde su repo).
 `-Drun.port=...` **no** cambia el puerto: su `pom.xml` fija `<port>8080</port>` en el
 `function-maven-plugin`. Si el 8080 está ocupado, edita esa línea y alinea `MS_SOPORTE_URI`.
 
+Solo expone un health estático. **No hay endpoint de consulta de auditorías**: la función
+consume eventos de Pub/Sub y los persiste; leerlos requeriría un endpoint nuevo en ese repo.
+
 ## Cabeceras
 
 - `X-Trace-Id`: si el cliente no la envía, el gateway la genera (UUID) y la propaga.
-- `X-Usuario-Id`, `X-Rol-Usuario-Id`, `X-Zona`: se reenvían **tal cual**. El gateway no las inventa.
-  Mientras no exista autenticación, las descargas de `ms-analitica` (`/api/v1/indicadores/**/descargar`)
-  responden 400 porque esos endpoints las exigen.
+- `X-Usuario-Id`, `X-Rol-Usuario-Id`, `X-Zona`: se reenvían **tal cual**. El gateway no las
+  inventa. Mientras no exista autenticación, las descargas de `ms-analitica`
+  (`/api/v1/indicadores/**/descargar`) responden 400 porque esos endpoints las exigen.
 
 ## CORS
 
@@ -46,36 +101,16 @@ Centralizado en el gateway (`CorsConfig`), con `GATEWAY_CORS_ALLOWED_ORIGINS` (d
 `http://localhost:5173`). Las rutas deduplican `Access-Control-Allow-Origin` para no duplicar la
 cabecera cuando el microservicio destino también la envía.
 
-## Ejecutar en local
+## Configuración
 
-```bash
-./mvnw spring-boot:run
-# http://localhost:8090/actuator/health
-```
+Todas las variables tienen default; no hace falta exportar ninguna en local.
 
-Puerto: solo `SERVER_PORT` (default **8090**; en esta máquina 8080/8081 están ocupados y
-8180-8184 son de los microservicios). No se lee `PORT`.
-
-El `JAVA_HOME` del sistema en esta máquina es **Zulu 11** y el proyecto exige Java 21: si
-`./mvnw` reporta la 11, exporta `JAVA_HOME` a un JDK 21 antes de compilar.
-
-No hace falta exportar ninguna variable: los defaults de `application.yml` ya apuntan a
-`localhost:818x`. Para apuntar a otro lado:
-
-```bash
-MS_FACTURACION_URI=http://localhost:9002 ./mvnw spring-boot:run
-```
-
-Con los microservicios levantados:
-
-```bash
-curl http://localhost:8090/ms-operaciones/api/v1/placas
-```
-
-## Stack
-
-- Java 21, Spring Boot 4.0.9, Spring Cloud 2025.1.4 (release train GA más reciente).
-  Es un deployable independiente: no necesita igualar el Boot 4.1.x de los microservicios.
+| Variable | Default | Uso |
+| :--- | :--- | :--- |
+| `SERVER_PORT` | `8090` | Puerto del gateway. **No se lee `PORT`.** |
+| `MS_*_URI` | `http://localhost:818x` | Destino de cada ruta |
+| `GATEWAY_CORS_ALLOWED_ORIGINS` | `http://localhost:5173` | Orígenes permitidos |
+| `MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE` | `health,info` | Endpoints de actuator |
 
 ## Tests
 
@@ -84,8 +119,13 @@ curl http://localhost:8090/ms-operaciones/api/v1/placas
 ```
 
 - `RutasGatewayTest`: levanta un backend HTTP de prueba y verifica el path con el que llega
-  cada ruta (incluido el `StripPrefix` de analítica) y la propagación de `X-Trace-Id`.
-- `GatewayApplicationTests`: comprueba que existan las cinco rutas y sus URIs por defecto.
+  cada ruta (incluido el `StripPrefix` de analítica y soporte) y la propagación de `X-Trace-Id`.
+- `GatewayApplicationTests`: comprueba que existan las seis rutas y sus URIs por defecto.
+
+## Stack
+
+- Java 21, Spring Boot 4.0.9, Spring Cloud 2025.1.4 (release train GA más reciente).
+  Es un deployable independiente: no necesita igualar el Boot 4.1.x de los microservicios.
 
 ## Pendiente
 
