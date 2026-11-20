@@ -32,7 +32,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class RutasGatewayTest {
 
-    private record Peticion(String path, String traceId, String userCiamId, String userId, String rolUserId) {
+    private record Peticion(String path, String traceId, String userCiamId, String userId, String rolUserId, String tallerId, String certificadorId) {
     }
 
     private static final BlockingQueue<Peticion> PETICIONES = new LinkedBlockingQueue<>();
@@ -50,10 +50,17 @@ class RutasGatewayTest {
                         exchange.getRequestHeaders().getFirst("X-Trace-Id"),
                         exchange.getRequestHeaders().getFirst("X-User-Ciam-Id"),
                         exchange.getRequestHeaders().getFirst("X-User-Id"),
-                        exchange.getRequestHeaders().getFirst("X-Rol-User-Id")));
+                        exchange.getRequestHeaders().getFirst("X-Rol-User-Id"),
+                        exchange.getRequestHeaders().getFirst("X-Taller-Id"),
+                        exchange.getRequestHeaders().getFirst("X-Certificador-Id")));
                 byte[] cuerpo;
                 if (rawPath.startsWith("/ms-identidad/api/v1/usuarios/ciam/")) {
-                    cuerpo = "{\"idUsuario\":42,\"idRol\":7}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                    String respuesta = rawPath.endsWith("/ciam/certificador-123")
+                            ? "{\"idUsuario\":43,\"idRol\":8,\"estado\":\"ACTIVO\",\"nombreRol\":\"CERTIFICADOR\",\"idTaller\":\"taller-ignorado\",\"idCertificador\":\"certificador-42\"}"
+                            : rawPath.endsWith("/ciam/inactivo-123")
+                                    ? "{\"idUsuario\":44,\"idRol\":7,\"estado\":\"INACTIVO\",\"nombreRol\":\"TALLER\",\"idTaller\":\"taller-inactivo\"}"
+                                    : "{\"idUsuario\":42,\"idRol\":7,\"estado\":\"ACTIVO\",\"nombreRol\":\"TALLER\",\"idTaller\":\"taller-42\",\"idCertificador\":\"certificador-ignorado\"}";
+                    cuerpo = respuesta.getBytes(java.nio.charset.StandardCharsets.UTF_8);
                     exchange.getResponseHeaders().add("Content-Type", "application/json");
                 } else {
                     cuerpo = "ok".getBytes(java.nio.charset.StandardCharsets.UTF_8);
@@ -143,34 +150,74 @@ class RutasGatewayTest {
     }
 
     @Test
-    void extraeSubDelTokenConsultaCiamYEnviaHeadersAlMicroservicio() {
-        // Header: {"alg":"none"}, Payload: {"sub":"usuario-123","name":"Test"}
+    void extraeSubConsultaCiamYPropagaHeadersDeIdentidadSobrescribiendoLosDelCliente() {
         String header = java.util.Base64.getUrlEncoder().withoutPadding()
                 .encodeToString("{\"alg\":\"none\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         String payload = java.util.Base64.getUrlEncoder().withoutPadding()
                 .encodeToString("{\"sub\":\"usuario-123\",\"name\":\"Test\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
         String jwt = header + "." + payload + ".";
 
-        cliente.get().uri("/ms-operaciones/api/v1/placas")
+        cliente.get().uri("/ms-operaciones/api/v1/taller/servicios/consulta")
                 .header("Authorization", "Bearer " + jwt)
+                .header("X-Taller-Id", "taller-falsificado")
+                .header("X-Certificador-Id", "certificador-falsificado")
                 .exchange()
                 .expectStatus().isOk();
 
-        // 1ra petición al backend: la consulta a ms-identidad por el id_ciam (sub)
         Peticion peticionCiam = esperarPeticion();
         assertThat(peticionCiam.path()).isEqualTo("/ms-identidad/api/v1/usuarios/ciam/usuario-123");
 
-        // 2da petición al backend: la petición enrutada a ms-operaciones con los headers poblados
         Peticion peticionOperaciones = esperarPeticion();
-        assertThat(peticionOperaciones.path()).isEqualTo("/ms-operaciones/api/v1/placas");
+        assertThat(peticionOperaciones.path()).isEqualTo("/ms-operaciones/api/v1/taller/servicios/consulta");
         assertThat(peticionOperaciones.userCiamId()).isEqualTo("usuario-123");
         assertThat(peticionOperaciones.userId()).isEqualTo("42");
         assertThat(peticionOperaciones.rolUserId()).isEqualTo("7");
+        assertThat(peticionOperaciones.tallerId()).isEqualTo("taller-42");
+        assertThat(peticionOperaciones.certificadorId()).isNull();
     }
 
     @Test
-    void noEnviaHeaderXUserIdCuandoNoHayToken() {
-        cliente.get().uri("/ms-operaciones/api/v1/placas")
+    void propagaCertificadorSoloCuandoEseEsElRolActivo() {
+        String header = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("{\"alg\":\"none\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String payload = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("{\"sub\":\"certificador-123\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        cliente.get().uri("/ms-operaciones/api/v1/taller/servicios/consulta")
+                .header("Authorization", "Bearer " + header + "." + payload + ".")
+                .exchange()
+                .expectStatus().isOk();
+
+        esperarPeticion();
+        Peticion operaciones = esperarPeticion();
+        assertThat(operaciones.tallerId()).isNull();
+        assertThat(operaciones.certificadorId()).isEqualTo("certificador-42");
+    }
+
+    @Test
+    void noPropagaTallerDeUsuarioInactivo() {
+        String header = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("{\"alg\":\"none\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        String payload = java.util.Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("{\"sub\":\"inactivo-123\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+
+        cliente.get().uri("/ms-operaciones/api/v1/taller/servicios/consulta")
+                .header("Authorization", "Bearer " + header + "." + payload + ".")
+                .exchange()
+                .expectStatus().isOk();
+
+        esperarPeticion();
+        assertThat(esperarPeticion().tallerId()).isNull();
+    }
+
+    @Test
+    void eliminaHeadersOperativosEnviadosPorClienteCuandoNoHayToken() {
+        cliente.get().uri("/ms-operaciones/api/v1/taller/servicios/consulta")
+                .header("X-User-Ciam-Id", "falso-ciam")
+                .header("X-User-Id", "falso-usuario")
+                .header("X-Rol-User-Id", "falso-rol")
+                .header("X-Taller-Id", "falso-taller")
+                .header("X-Certificador-Id", "falso-certificador")
                 .exchange()
                 .expectStatus().isOk();
 
@@ -178,6 +225,8 @@ class RutasGatewayTest {
         assertThat(recibida.userCiamId()).isNull();
         assertThat(recibida.userId()).isNull();
         assertThat(recibida.rolUserId()).isNull();
+        assertThat(recibida.tallerId()).isNull();
+        assertThat(recibida.certificadorId()).isNull();
     }
 
     private static Peticion esperarPeticion() {

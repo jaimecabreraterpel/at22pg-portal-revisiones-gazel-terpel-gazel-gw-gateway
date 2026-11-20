@@ -25,9 +25,8 @@ import java.util.Optional;
 
 /**
  * Extrae el claim {@code sub} del token JWT enviado en {@code Authorization: Bearer <token>}
- * (sin validar la firma), lo asigna a {@code X_USER_ID} / {@code X-User-Id}, consulta el
- * servicio de identidad {@code /ms-identidad/api/v1/usuarios/ciam/{id_ciam}} y propaga
- * los datos del usuario y rol en las cabeceras hacia los microservicios.
+ * (sin validar la firma), consulta Identidad y sobrescribe los headers derivados del usuario
+ * antes de enrutar la solicitud a los microservicios.
  */
 @Component
 public class JwtSubHeaderGlobalFilter implements GlobalFilter, Ordered {
@@ -37,6 +36,8 @@ public class JwtSubHeaderGlobalFilter implements GlobalFilter, Ordered {
     public static final String X_USER_CIAM_ID_HEADER = "X-User-Ciam-Id";
     public static final String X_USER_ID_HEADER = "X-User-Id";
     public static final String X_ROL_USER_ID_HEADER = "X-Rol-User-Id";
+    public static final String X_TALLER_ID_HEADER = "X-Taller-Id";
+    public static final String X_CERTIFICADOR_ID_HEADER = "X-Certificador-Id";
 
     private static final String BEARER_PREFIX = "Bearer ";
     private static final String CIAM_ENDPOINT_TEMPLATE = "/ms-identidad/api/v1/usuarios/ciam/%s";
@@ -58,7 +59,8 @@ public class JwtSubHeaderGlobalFilter implements GlobalFilter, Ordered {
         String authHeader = exchange.getRequest().getHeaders().getFirst(HttpHeaders.AUTHORIZATION);
         Optional<String> subOpt = extractSubFromAuthorization(authHeader);
         if (subOpt.isEmpty()) {
-            return chain.filter(exchange);
+            ServerHttpRequest mutated = mutateHeaders(exchange.getRequest(), null, Map.of());
+            return chain.filter(exchange.mutate().request(mutated).build());
         }
 
         String sub = subOpt.get();
@@ -102,15 +104,34 @@ public class JwtSubHeaderGlobalFilter implements GlobalFilter, Ordered {
     private ServerHttpRequest mutateHeaders(ServerHttpRequest request, String sub, Map<String, Object> userData) {
         String usuarioId = extractField(userData, List.of("idUsuario", "usuarioId", "id"));
         String rolId = extractRolId(userData);
+        String estado = extractField(userData, List.of("estado"));
+        String nombreRol = extractField(userData, List.of("nombreRol"));
+        String tallerId = "ACTIVO".equalsIgnoreCase(estado) && "TALLER".equalsIgnoreCase(nombreRol)
+                ? extractField(userData, List.of("idTaller")) : null;
+        String certificadorId = "ACTIVO".equalsIgnoreCase(estado) && "CERTIFICADOR".equalsIgnoreCase(nombreRol)
+                ? extractField(userData, List.of("idCertificador")) : null;
 
         return request.mutate()
                 .headers(headers -> {
-                    headers.set(X_USER_CIAM_ID_HEADER, sub);
+                    headers.remove(X_USER_CIAM_ID_HEADER);
+                    headers.remove(X_USER_ID_HEADER);
+                    headers.remove(X_ROL_USER_ID_HEADER);
+                    headers.remove(X_TALLER_ID_HEADER);
+                    headers.remove(X_CERTIFICADOR_ID_HEADER);
+                    if (sub != null) {
+                        headers.set(X_USER_CIAM_ID_HEADER, sub);
+                    }
                     if (usuarioId != null) {
                         headers.set(X_USER_ID_HEADER, usuarioId);
                     }
                     if (rolId != null) {
                         headers.set(X_ROL_USER_ID_HEADER, rolId);
+                    }
+                    if (tallerId != null) {
+                        headers.set(X_TALLER_ID_HEADER, tallerId);
+                    }
+                    if (certificadorId != null) {
+                        headers.set(X_CERTIFICADOR_ID_HEADER, certificadorId);
                     }
                 })
                 .build();

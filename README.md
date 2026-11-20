@@ -91,9 +91,8 @@ consume eventos de Pub/Sub y los persiste; leerlos requeriría un endpoint nuevo
 ## Cabeceras
 
 - `X-Trace-Id`: si el cliente no la envía, el gateway la genera (UUID) y la propaga.
-- `X-Usuario-Id`, `X-Rol-Usuario-Id`, `X-Zona`: se reenvían **tal cual**. El gateway no las
-  inventa. Mientras no exista autenticación, las descargas de `ms-analitica`
-  (`/api/v1/indicadores/**/descargar`) responden 400 porque esos endpoints las exigen.
+- Con `Authorization: Bearer`, el gateway decodifica el `sub`, consulta Identidad y sobrescribe los headers `X-User-*` con los valores de la respuesta. Propaga `X-Taller-Id` solo para usuario `ACTIVO` con rol `TALLER`, y `X-Certificador-Id` solo para `ACTIVO` con rol `CERTIFICADOR`. Si no puede decodificar el JWT o no resuelve la identidad, elimina esos headers recibidos del cliente.
+- El gateway solo decodifica el JWT; no valida su firma. No expongas Operaciones directamente si confía en `X-Taller-Id`.
 
 ## CORS
 
