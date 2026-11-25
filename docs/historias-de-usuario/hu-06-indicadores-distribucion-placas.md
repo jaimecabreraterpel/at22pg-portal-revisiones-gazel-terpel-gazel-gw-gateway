@@ -1,0 +1,19 @@
+### CONTROL DE VERSIONES
+
+| Fecha | Versión | Autor | Cargo |
+| --- | --- | --- | --- |
+| 16/01/2026 | 1.0 | Olga Ramirez Murillo | Analista Funcional Periferia |
+
+### HU 06 – Modulo Indicadores distribución placas
+
+| Descripción | El sistema debe proporcionar un módulo de indicadores que permita al usuario administrador visualizar las cifras ejecutadas por cada uno de los programas (PAP, Vencidos y Altos Consumidores). Esta funcionalidad permitirá registrar los presupuestos anuales asignados a cada programa y, a partir de allí, visualizar la ejecución presupuestal basada en los pagos realizados. |
+| --- | --- |
+| Yo Como | Administrador |
+| Quiero | Visualizar indicadores de ejecución de los programas PAP, Vencidos y Altos Consumidores y realizar seguimiento a los pagos, aprobaciones y rechazos por período. |
+| Para | Tener mayor control de la ejecución de los presupuestos asignados a cada programa y realizar seguimiento a los pagos, aprobaciones y rechazos por período |
+| Pre-Condición | El usuario debe tener rol de administrador<br>Deben existir registros de pagos en el sistema<br>Deben existir presupuestos asignados a los programas |
+| Criterios de Aceptación | Escenario 0 Visualización pantalla Indicadores: <br>Dado que: Un usuario administrador  <br>Cuando: ingresa al módulo Indicadores<br>Entonces: se debe visualizar la siguiente información:<br>Título: “Indicadores”<br>Subtitulo: “Seguimiento de métricas importantes para la compañía de gas”<br>Pestañas con los programas” Distribución de placas”, “Distribución de presupuesto” y “Certificadores y talleres”<br>Título de la pestaña seleccionada <br>Botón “Descargar en Excel”<br>____________________________________________________________________<br>Escenario 1: Visualización Pestaña Distribución de placas <br>Dado que Un usuario administrador ingreso al módulo indicadores <br>Cuando Selecciono la pestaña “Distribución de placas” <br>Entonces Se debe visualizar la siguiente información (ver imagen de referencia):<br>Título de la pestaña selecciona en este caso “Distribución de placas”<br>Botón “descargar Excel”<br>Filtros: <br>Programa (lista desplegable)<br>Año (lista desplegable)<br>Mes (lista desplegable)<br>Botón “aplicar”<br>Cuadro con la cifra y porcentaje “Placas habilitadas”<br>Cuadro con la cifra y porcentaje “Placas registradas”<br>Cuadro con la cifra y porcentaje “Placas pagadas”<br>Cuadro con la cifra y porcentaje “Placas rechazadas”<br>Grafica “placas inscritas mes” (mes filtrado)<br>____________________________________________________________________<br>Escenario 2: Botón “Aplicar”<br>Dado que Un usuario administrador ingreso al módulo indicadores <br>Cuando Selecciono la pestaña “Distribución de presupuesto” y da clic en el botón “Aplicar” luego de seleccionar los filtros<br>Entonces: se debe visualizar la información en las gráficas según los filtros seleccionados previamente. <br>____________________________________________________________________<br>Escenario 3 Botón descargar Excel<br>Dado que Un usuario administrador ingreso al módulo indicadores <br>Cuando Selecciono la pestaña “Distribución de presupuesto” y da clic en el botón “Descargar en Excel”<br>Entonces se debe visualizar un popup con el siguiente mensaje “Documento descargado con éxito” Revisa tu carpeta de descarga. (ver imagen de referencia)<br> (ver imagen de referencia)<br>Y, además: El archivo descargado debe contener la información de los indicadores vistos en pantalla y se debe descargar en un archivo Excel. |
+| Observaciones | Las plantillas de descarga de documentos las debe suministrar el negocio. |
+| Imágenes de Referencia |  |
+| Diseño Propuesto | NOTA: El diseño propuesto puede sufrir algunas variaciones durante el proceso de desarrollo, sin embargo, si el ajuste es de alto impacto será notificado y estará sujeto a la aprobación del cliente siendo parte de un control de cambios. |
+| Entradas y Salidas |  |
