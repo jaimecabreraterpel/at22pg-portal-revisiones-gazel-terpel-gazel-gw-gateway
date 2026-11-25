@@ -42,7 +42,7 @@ public class CurlLoggingGlobalFilter {
 
         @Override
         public int getOrder() {
-            // Antes de TraceIdGlobalFilter (+10) y JwtSubHeaderGlobalFilter (+20) para mostrar lo que envió el cliente originalmente
+            // Antes de TraceIdGlobalFilter (+10) para mostrar lo que envió el cliente originalmente
             return Ordered.HIGHEST_PRECEDENCE;
         }
     }

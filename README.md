@@ -91,9 +91,14 @@ consume eventos de Pub/Sub y los persiste; leerlos requeriría un endpoint nuevo
 ## Cabeceras
 
 - `X-Trace-Id`: si el cliente no la envía, el gateway la genera (UUID) y la propaga.
-- `X-Usuario-Id`, `X-Rol-Usuario-Id`, `X-Zona`: se reenvían **tal cual**. El gateway no las
-  inventa. Mientras no exista autenticación, las descargas de `ms-analitica`
-  (`/api/v1/indicadores/**/descargar`) responden 400 porque esos endpoints las exigen.
+- El gateway **no autentica ni consulta Identidad**. Reenvía tal cual los headers de identidad
+  que envía el cliente: `X-User-Ciam-Id`, `X-User-Id`, `X-Rol-User-Id`, `X-Taller-Id`,
+  `X-Certificador-Id`, `X-Talleres-Autorizados`, `X-Regionales-Autorizadas`,
+  `X-Talleres-Cartera`.
+- Riesgo asumido: cualquiera que alcance el puerto del gateway puede falsificar esos headers y
+  `ms-operaciones` los usa para alcance por rol y para resolver taller/certificador. No expongas
+  el gateway directamente a Internet: la autenticación debe resolverse antes (Ingress/WAF/BFF) y
+  el acceso directo a los microservicios debe estar cerrado.
 
 ## CORS
 
@@ -132,7 +137,7 @@ Todas las variables tienen default; no hace falta exportar ninguna en local.
 Solo aplica **si el gateway llega a desplegarse**; hoy no hace falta para uso local.
 
 - Autenticación: hoy es pass-through sin validar token (decisión explícita). Sin auth, el
-  gateway reenvía `X-Usuario-Id` / `X-Rol-Usuario-Id` / `X-Zona` tal cual, así que un cliente
+  gateway reenvía `X-User-Id` / `X-Rol-User-Id` / `X-Taller-Id` tal cual, así que un cliente
   puede elegir su rol: aceptable en local, no en un entorno compartido.
 - Pipeline CI (`azure-pipelines.yml`), Dockerfile y timeouts hacia los backends.
 - Agregación de OpenAPI.
