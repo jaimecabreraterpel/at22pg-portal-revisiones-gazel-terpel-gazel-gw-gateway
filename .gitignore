@@ -42,3 +42,6 @@ $RECYCLE.BIN/
 
 ### macOS ###
 .DS_Store
+
+### Credenciales locales ###
+credenciales/

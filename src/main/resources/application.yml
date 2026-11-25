@@ -23,7 +23,7 @@ gazel:
       # es un HttpFunction que sirve en raíz, de ahi el stripPrefix de su ruta.
       soporte: ${MS_SOPORTE_URI:http://localhost:8080}
     cors:
-      allowed-origins: ${GATEWAY_CORS_ALLOWED_ORIGINS:http://localhost:5173}
+      allowed-origins: ${GATEWAY_CORS_ALLOWED_ORIGINS:*}
 
 management:
   endpoints:
