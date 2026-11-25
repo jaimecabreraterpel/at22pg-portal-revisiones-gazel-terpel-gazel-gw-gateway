@@ -15,6 +15,8 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.net.InetSocketAddress;
+import java.nio.charset.StandardCharsets;
+import java.util.Base64;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
@@ -24,15 +26,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /**
  * Prueba de humo del enrutamiento real: levanta un backend HTTP de prueba y verifica
- * que el gateway reescriba el path como espera cada microservicio.
- *
- * <p>Es el caso que los tests de {@code RouteLocator} no cubren: un cambio de
- * {@code context-path} en un microservicio se detecta aquí, no en un curl manual.
+ * que el gateway reescriba el path como espera cada microservicio y que reenvíe
+ * los headers de identidad sin consultar ms-identidad.
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class RutasGatewayTest {
 
-    private record Peticion(String path, String traceId, String userCiamId, String userId, String rolUserId) {
+    private record Peticion(
+            String path,
+            String traceId,
+            String userCiamId,
+            String userId,
+            String rolUserId,
+            String tallerId,
+            String certificadorId,
+            String talleresAutorizados,
+            String regionalesAutorizadas,
+            String talleresCartera
+    ) {
     }
 
     private static final BlockingQueue<Peticion> PETICIONES = new LinkedBlockingQueue<>();
@@ -44,20 +55,18 @@ class RutasGatewayTest {
         try {
             HttpServer servidor = HttpServer.create(new InetSocketAddress("localhost", 0), 0);
             servidor.createContext("/", exchange -> {
-                String rawPath = exchange.getRequestURI().getRawPath();
                 PETICIONES.add(new Peticion(
-                        rawPath,
+                        exchange.getRequestURI().getRawPath(),
                         exchange.getRequestHeaders().getFirst("X-Trace-Id"),
                         exchange.getRequestHeaders().getFirst("X-User-Ciam-Id"),
                         exchange.getRequestHeaders().getFirst("X-User-Id"),
-                        exchange.getRequestHeaders().getFirst("X-Rol-User-Id")));
-                byte[] cuerpo;
-                if (rawPath.startsWith("/ms-identidad/api/v1/usuarios/ciam/")) {
-                    cuerpo = "{\"idUsuario\":42,\"idRol\":7}".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                    exchange.getResponseHeaders().add("Content-Type", "application/json");
-                } else {
-                    cuerpo = "ok".getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                }
+                        exchange.getRequestHeaders().getFirst("X-Rol-User-Id"),
+                        exchange.getRequestHeaders().getFirst("X-Taller-Id"),
+                        exchange.getRequestHeaders().getFirst("X-Certificador-Id"),
+                        exchange.getRequestHeaders().getFirst("X-Talleres-Autorizados"),
+                        exchange.getRequestHeaders().getFirst("X-Regionales-Autorizadas"),
+                        exchange.getRequestHeaders().getFirst("X-Talleres-Cartera")));
+                byte[] cuerpo = "ok".getBytes(StandardCharsets.UTF_8);
                 exchange.sendResponseHeaders(200, cuerpo.length);
                 try (var salida = exchange.getResponseBody()) {
                     salida.write(cuerpo);
@@ -143,12 +152,37 @@ class RutasGatewayTest {
     }
 
     @Test
-    void extraeSubDelTokenConsultaCiamYEnviaHeadersAlMicroservicio() {
-        // Header: {"alg":"none"}, Payload: {"sub":"usuario-123","name":"Test"}
-        String header = java.util.Base64.getUrlEncoder().withoutPadding()
-                .encodeToString("{\"alg\":\"none\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
-        String payload = java.util.Base64.getUrlEncoder().withoutPadding()
-                .encodeToString("{\"sub\":\"usuario-123\",\"name\":\"Test\"}".getBytes(java.nio.charset.StandardCharsets.UTF_8));
+    void reenviaTalCualLosHeadersDeIdentidadDelCliente() {
+        cliente.get().uri("/ms-operaciones/api/v1/taller/servicios/consulta")
+                .header("X-User-Ciam-Id", "ciam-123")
+                .header("X-User-Id", "usuario-42")
+                .header("X-Rol-User-Id", "rol-7")
+                .header("X-Taller-Id", "taller-42")
+                .header("X-Certificador-Id", "certificador-42")
+                .header("X-Talleres-Autorizados", "taller-1,taller-2")
+                .header("X-Regionales-Autorizadas", "regional-1")
+                .header("X-Talleres-Cartera", "taller-3")
+                .exchange()
+                .expectStatus().isOk();
+
+        Peticion recibida = esperarPeticion();
+        assertThat(recibida.path()).isEqualTo("/ms-operaciones/api/v1/taller/servicios/consulta");
+        assertThat(recibida.userCiamId()).isEqualTo("ciam-123");
+        assertThat(recibida.userId()).isEqualTo("usuario-42");
+        assertThat(recibida.rolUserId()).isEqualTo("rol-7");
+        assertThat(recibida.tallerId()).isEqualTo("taller-42");
+        assertThat(recibida.certificadorId()).isEqualTo("certificador-42");
+        assertThat(recibida.talleresAutorizados()).isEqualTo("taller-1,taller-2");
+        assertThat(recibida.regionalesAutorizadas()).isEqualTo("regional-1");
+        assertThat(recibida.talleresCartera()).isEqualTo("taller-3");
+    }
+
+    @Test
+    void noConsultaMsIdentidadAunqueVengaAuthorization() {
+        String header = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("{\"alg\":\"none\"}".getBytes(StandardCharsets.UTF_8));
+        String payload = Base64.getUrlEncoder().withoutPadding()
+                .encodeToString("{\"sub\":\"usuario-123\"}".getBytes(StandardCharsets.UTF_8));
         String jwt = header + "." + payload + ".";
 
         cliente.get().uri("/ms-operaciones/api/v1/placas")
@@ -156,28 +190,14 @@ class RutasGatewayTest {
                 .exchange()
                 .expectStatus().isOk();
 
-        // 1ra petición al backend: la consulta a ms-identidad por el id_ciam (sub)
-        Peticion peticionCiam = esperarPeticion();
-        assertThat(peticionCiam.path()).isEqualTo("/ms-identidad/api/v1/usuarios/ciam/usuario-123");
-
-        // 2da petición al backend: la petición enrutada a ms-operaciones con los headers poblados
-        Peticion peticionOperaciones = esperarPeticion();
-        assertThat(peticionOperaciones.path()).isEqualTo("/ms-operaciones/api/v1/placas");
-        assertThat(peticionOperaciones.userCiamId()).isEqualTo("usuario-123");
-        assertThat(peticionOperaciones.userId()).isEqualTo("42");
-        assertThat(peticionOperaciones.rolUserId()).isEqualTo("7");
-    }
-
-    @Test
-    void noEnviaHeaderXUserIdCuandoNoHayToken() {
-        cliente.get().uri("/ms-operaciones/api/v1/placas")
-                .exchange()
-                .expectStatus().isOk();
-
         Peticion recibida = esperarPeticion();
+        assertThat(recibida.path()).isEqualTo("/ms-operaciones/api/v1/placas");
         assertThat(recibida.userCiamId()).isNull();
         assertThat(recibida.userId()).isNull();
         assertThat(recibida.rolUserId()).isNull();
+        assertThat(PETICIONES.poll())
+                .as("el gateway no debe consultar /ms-identidad/api/v1/usuarios/ciam/**")
+                .isNull();
     }
 
     private static Peticion esperarPeticion() {
